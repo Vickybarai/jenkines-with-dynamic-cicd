@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars in the root project (or pass -var-file).
+# Adjust CIDRs and AZs for your region — AZ names are region-specific.
+
+vpc_cidr = "10.0.0.0/16"
+
+# One /24 per AZ inside the VPC CIDR (non-overlapping)
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+
+# Example for ap-south-1 — change to your region's AZs
+availability_zones = ["ap-south-1a", "ap-south-1b"]
+
+cluster_name = "my-eks-cluster"
+environment  = "dev"
+project_name = "platform"
+
+# true = one NAT (~$32/mo + data); false = NAT per AZ (HA, higher cost)
+single_nat_gateway = true
+
+additional_tags = {
+  Owner = "platform-team"
+}

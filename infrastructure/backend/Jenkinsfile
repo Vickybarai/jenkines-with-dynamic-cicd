@@ -1,0 +1,146 @@
+// Backend Terraform pipeline (VPC + EKS)
+// Requires: terraform, aws-frontend-terraform credentials, terraform.tfvars and backend.hcl in TF_DIR
+
+pipeline {
+    agent {
+        label 'ecs2'
+    }
+
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['create', 'delete'],
+            description: 'create: terraform plan + apply (provision VPC + EKS). delete: terraform plan -destroy + destroy (tear down all backend infra).'
+        )
+    }
+
+    environment {
+        TF_DIR = 'infrastructure/backend'
+        AWS_DEFAULT_REGION = 'eu-west-1'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git url: 'https://github.com/AnupDudhe/cdec-alpha-app.git', branch: 'main'
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir(env.TF_DIR) {
+                        sh 'terraform init -input=false'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Validate') {
+            steps {
+                dir(env.TF_DIR) {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                expression { params.ACTION == 'create' }
+            }
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir(env.TF_DIR) {
+                        sh 'terraform plan -input=false -var-file=terraform.tfvars'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression { params.ACTION == 'create' }
+            }
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir(env.TF_DIR) {
+                        sh 'terraform apply -input=false -auto-approve -var-file=terraform.tfvars'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Plan Destroy') {
+            when {
+                expression { params.ACTION == 'delete' }
+            }
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir(env.TF_DIR) {
+                        sh 'terraform plan -destroy -input=false -var-file=terraform.tfvars'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Destroy') {
+            when {
+                expression { params.ACTION == 'delete' }
+            }
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir(env.TF_DIR) {
+                        sh 'terraform destroy -input=false -auto-approve -var-file=terraform.tfvars'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                if (params.ACTION == 'create') {
+                    echo 'Backend infrastructure created successfully!'
+                } else {
+                    echo 'Backend infrastructure destroyed successfully!'
+                }
+            }
+        }
+        failure {
+            script {
+                if (params.ACTION == 'create') {
+                    echo 'Backend infrastructure create failed. Check the stage logs above.'
+                } else {
+                    echo 'Backend infrastructure destroy failed. Check the stage logs above.'
+                }
+            }
+        }
+    }
+}

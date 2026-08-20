@@ -1,0 +1,29 @@
+# Example inputs — wire from VPC module outputs at the root, or set explicitly.
+
+cluster_name       = "cdec-eks-dev"
+kubernetes_version = null # null = latest stable EKS version in region
+
+vpc_id             = "vpc-xxxxxxxx"
+private_subnet_ids = ["subnet-aaa", "subnet-bbb"]
+public_subnet_ids  = ["subnet-ccc", "subnet-ddd"]
+
+node_instance_types = ["t3.medium"]
+desired_size        = 2
+min_size            = 1
+max_size            = 4
+disk_size           = 50
+
+environment  = "dev"
+project_name = "cdec"
+
+cluster_endpoint_public_access  = true
+cluster_endpoint_private_access = true
+cluster_endpoint_public_access_cidrs = ["203.0.113.0/32"] # your VPN/office CIDR in prod
+
+enable_cluster_autoscaler_tags = true
+
+# IAM ARNs for kubectl (users or roles). Required for API / API_AND_CONFIG_MAP auth.
+cluster_admin_principal_arns = [
+  "arn:aws:iam::ACCOUNT_ID:user/deploy-user",
+]
+include_caller_as_cluster_admin = true

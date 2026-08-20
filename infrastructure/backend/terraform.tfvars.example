@@ -1,0 +1,46 @@
+# Copy to terraform.tfvars. Do not commit terraform.tfvars.
+
+aws_region   = "eu-west-1"
+environment  = "dev"
+project_name = "cdec-alpha"
+cluster_name = "cdec-eks-dev"
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+availability_zones   = ["eu-west-1a", "eu-west-1b"]
+
+single_nat_gateway = true
+
+kubernetes_version  = null
+node_instance_types = ["t3.medium"]
+desired_size        = 2
+min_size            = 1
+max_size            = 3
+
+cluster_endpoint_public_access       = true
+cluster_endpoint_private_access      = true
+cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+
+# IAM user ARN (Jenkins aws-frontend-terraform access keys)
+cluster_admin_principal_arns = [
+  "arn:aws:iam::439055361064:user/YOUR_IAM_USER",
+]
+
+# EC2 instance profile role NAME — do NOT use assumed-role ARN from sts get-caller-identity on EC2
+cluster_admin_iam_role_names = [
+  "YOUR_EC2_INSTANCE_ROLE_NAME",
+]
+
+# Grants admin to whoever runs terraform apply (Jenkins IAM user) — not EC2 SSH sessions
+include_caller_as_cluster_admin = true
+
+additional_tags = {
+  Owner = "platform-team"
+}
+
+# ALB Ingress — requires EKS cluster to exist first; re-run apply if k8s resources fail on first bootstrap
+enable_alb_ingress  = true
+ingress_host        = "api.your-domain.com"
+acm_certificate_arn = "arn:aws:acm:eu-west-1:ACCOUNT_ID:certificate/CERT_ID"
+alb_name            = "cdec-alpha-alb"

@@ -1,0 +1,93 @@
+// Course service deploy pipeline — build Docker image, push to ECR, roll out to EKS
+//
+// Jenkins agent needs: Docker, AWS CLI, kubectl
+// AWS credential in Jenkins (e.g. aws-frontend-terraform):
+//   ecr:GetAuthorizationToken, ecr:BatchCheckLayerAvailability, ecr:PutImage, ecr:InitiateLayerUpload, ecr:UploadLayerPart, ecr:CompleteLayerUpload
+//   eks:DescribeCluster (for update-kubeconfig)
+// EKS access: IAM principal must be in infrastructure/backend terraform.tfvars
+//   cluster_admin_principal_arns (see backend README — kubectl access)
+
+pipeline {
+    agent {
+        label 'terraform'
+    }
+    
+    environment {
+        EKS_CLUSTER = 'cdec-eks-dev'
+        EKS_REGION = 'eu-west-1'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git url: 'https://github.com/atulyw/cdec-alpha-app.git', branch: 'main'
+            }
+        }
+
+        stage('Build Docker image') {
+            agent {
+                label 'master'
+            }
+            steps {
+                dir('application/backend/course-service') {
+                    sh '''
+                        docker build -t 933516006319.dkr.ecr.eu-west-1.amazonaws.com/backend/course-service:latest .
+                    '''
+                }
+            }
+        }
+
+        stage('Push to ECR') {
+            agent {
+                label 'master'
+            }
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    sh '''
+                        export AWS_DEFAULT_REGION=eu-west-1
+                        aws ecr get-login-password --region eu-west-1 | \
+                            docker login --username AWS --password-stdin 933516006319.dkr.ecr.eu-west-1.amazonaws.com
+                        docker push 933516006319.dkr.ecr.eu-west-1.amazonaws.com/backend/course-service:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-frontend-terraform',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir('application/backend/course-service') {
+                        sh '''
+                            export AWS_DEFAULT_REGION=${EKS_REGION}
+                            aws eks update-kubeconfig --region ${EKS_REGION} --name ${EKS_CLUSTER}
+
+                            kubectl apply -f k8s/deployment.yml -n default
+                            kubectl rollout restart deployment/course-service -n default
+                            kubectl rollout status deployment/course-service -n default --timeout=300s
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'course-service deployed successfully!'
+        }
+        failure {
+            echo 'course-service deployment failed. Check the stage logs above.'
+        }
+    }
+}

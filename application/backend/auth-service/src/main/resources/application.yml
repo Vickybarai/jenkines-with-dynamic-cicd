@@ -1,0 +1,21 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb+srv://cloudblitz:redhat123@cloudblitz-cluster.0xef32k.mongodb.net/cb_auth?retryWrites=true&w=majority&appName=cdec-dev}
+  security:
+    user:
+      name: admin
+      password: admin
+
+jwt:
+  secret: ${JWT_SECRET:CloudBlitzJWTSecretKeyForSecureAuthentication2024!@#}
+  expiration: 86400000 # 24 hours
+
+logging:
+  level:
+    in.cloudblitz.auth: DEBUG
