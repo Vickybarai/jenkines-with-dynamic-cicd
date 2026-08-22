@@ -57,8 +57,12 @@ sudo systemctl restart jenkins
 <details>
 <summary>⚡ Click to view: AWS CLI - Attach IAM Role</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`INSTANCE_ID`**: Go to your AWS EC2 Console, click on your `jenkins-master-server`, and copy the **Instance ID** (looks like `i-0abcd1234efgh5678`). Paste it below without quotes.
+> *   **`ROLE_NAME`**: Leave this as `EC2-Full-Access-Role` unless you specifically named your IAM role something else in the manual steps.
+
 ```bash
-# 1. First, create an IAM Instance Profile wrapping the role
+# 1. Create an IAM Instance Profile wrapping the role
 aws iam create-instance-profile \
     --instance-profile-name EC2-Full-Access-Role \
     --region ap-southeast-2
@@ -68,8 +72,8 @@ aws iam add-role-to-instance-profile \
     --role-name EC2-Full-Access-Role \
     --region ap-southeast-2
 
-# 2. Attach it to your running EC2 instance (Replace INSTANCE_ID with yours)
-INSTANCE_ID="i-0abcd1234efgh5678" 
+# 2. Attach it to your running EC2 instance
+INSTANCE_ID="i-0abcd1234efgh5678" # <--- CHANGE THIS
 aws ec2 associate-iam-instance-profile \
     --instance-id $INSTANCE_ID \
     --iam-instance-profile-name EC2-Full-Access-Role \
@@ -98,10 +102,13 @@ aws ec2 associate-iam-instance-profile \
 <details>
 <summary>📁 Click to view: create-log-group.sh</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`--region`**: Change `ap-southeast-2` to the AWS region where you are building your infrastructure (e.g., `eu-west-1` for Ireland, `us-east-1` for N. Virginia).
+
 ```bash
 aws logs create-log-group \
   --log-group-name /ecs/jenkins-agent \
-  --region ap-southeast-2
+  --region ap-southeast-2 # <--- CHANGE THIS REGION IF NEEDED
 ```
 </details>
 
@@ -112,21 +119,28 @@ aws logs create-log-group \
 <details>
 <summary>📁 Click to view: role.sh</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`ROLE_NAME`**: Leave this as `ECS-Task-Execution-Role` unless instructed otherwise.
+> *   **`--region`**: Change `ap-southeast-2` to the AWS region you are working in.
+> *   **Output:** When this finishes, it will print an ARN. **Write that ARN down**, you need it in Step 2.2!
+
 ```bash
 #!/bin/bash
 ROLE_NAME="ECS-Task-Execution-Role"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION="ap-southeast-2" # <--- CHANGE THIS REGION IF NEEDED
 
 aws iam create-role \
     --role-name $ROLE_NAME \
     --assume-role-policy-document '{
         "Version": "2012-10-17",
         "Statement": [{ "Effect": "Allow", "Principal": { "Service": "ecs-tasks.amazonaws.com" }, "Action": "sts:AssumeRole" }]
-    }' 2>/dev/null || true
+    }' --region $REGION 2>/dev/null || true
 
 aws iam attach-role-policy \
     --role-name $ROLE_NAME \
-    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy \
+    --region $REGION
 
 aws iam put-role-policy \
     --role-name $ROLE_NAME \
@@ -136,7 +150,7 @@ aws iam put-role-policy \
         "Statement": [
             { "Effect": "Allow", "Action": ["ecs:RunTask", "ecs:RegisterTaskDefinition", "ecs:DescribeTasks", "ecs:DescribeClusters", "ecr:GetAuthorizationToken", "ecr:BatchGetImage", "logs:CreateLogStream", "logs:PutLogEvents", "iam:PassRole"], "Resource": "*" }
         ]
-    }'
+    }' --region $REGION
 
 echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 ```
@@ -146,11 +160,15 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 > ⚠️ **IMPORTANT NOTE:** When creating ECS task definitions for Jenkins agents, **DO NOT** set `JENKINS_SECRET` or `JENKINS_AGENT_NAME` as environment variables. These are automatically provided by the Jenkins ECS plugin and setting them manually will cause the "Cannot provide secret via both named and positional arguments" error.
 
 1. Go to **AWS ECS** > **Task Definitions** > **Create new** > **JSON**.
-2. Paste the JSON below. Replace the `"executionRoleArn"`.
+2. Paste the JSON below. Replace the `"executionRoleArn"` with the ARN you got from Step 2.1.
 3. Click **Create**. *(We will upgrade the resources and image in Step 2.5/2.6).*
 
 <details>
 <summary>📁 Click to view: base-task-definition.json</summary>
+
+> 🛑️ **BEGINNERS: What to change before saving in AWS!**
+> *   **`executionRoleArn`**: Replace the dummy text with the ARN you copied from the terminal after running Step 2.1 (e.g., `arn:aws:iam::123456789012:role/ECS-Task-Execution-Role`).
+> *   **`awslogs-region`**: Make sure this matches the region you are working in.
 
 ```json
 {
@@ -169,7 +187,7 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 
 ### Step 2.3: Configure Jenkins ECS Cloud
 1. **Manage Jenkins** > **Clouds** > **New Cloud** > `Amazon ECS`.
-2. **Name:** `ECS` | **Region:** `ap-southeast-2` (or yours).
+2. **Name:** `ECS` | **Region:** Your chosen region.
 3. Save, then click the cloud again > **Add Agent Template**:
    *   **Label:** `ecs` *(Used in Jenkinsfiles)*
    *   **Template Name:** `ecs-agent`
@@ -195,6 +213,10 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 <details>
 <summary>⚡ Click to view: AWS CLI - Create ECR Repository</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`--region`**: Change `ap-southeast-2` to the AWS region you are working in.
+> *   **`--repository-name`**: Leave as `jenkins-agent-custom` unless told otherwise.
+
 ```bash
 aws ecr create-repository --repository-name jenkins-agent-custom --region ap-southeast-2
 ```
@@ -202,7 +224,7 @@ aws ecr create-repository --repository-name jenkins-agent-custom --region ap-sou
 
 <details>
 <summary>🐳 Click to view: Custom Jenkins Agent Dockerfile</summary>
-
+*(No changes needed here, just copy and paste the whole block into a file named `Dockerfile` on your server)*
 ```dockerfile
 FROM jenkins/inbound-agent:latest
 USER root
@@ -221,14 +243,19 @@ USER jenkins
 ```
 </details>
 
-3. Run the following commands to build and push (Replace `<region>` and `<account-id>`):
+3. Run the following commands to build and push:
 
 <details>
 <summary>📁 Click to view: build-and-push.sh</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`REGION`**: Change `ap-southeast-2` to the AWS region you are working in (must match the ECR repo region).
+> *   **`REPO_NAME`**: Leave as `jenkins-agent-custom` unless told otherwise.
+> *   *Note: Do NOT change `ACCOUNT_ID`, the script finds it automatically.*
+
 ```bash
 #!/bin/bash
-REGION="ap-southeast-2"
+REGION="ap-southeast-2" # <--- CHANGE THIS REGION
 REPO_NAME="jenkins-agent-custom"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 IMAGE_TAG="latest"
@@ -246,7 +273,7 @@ Now we update the blueprint to use the real image and increase CPU/Memory for Te
 1. Go back to **AWS ECS** > **Task Definitions** > Select your task > **Create new revision**.
 2. Change **CPU** to `2048` and **Memory** to `4096`.
 3. Scroll to Container Definitions > **Image**.
-4. Replace the dummy image with: `<account-id>.dkr.ecr.<region>.amazonaws.com/jenkins-agent-custom:latest`
+4. Replace the dummy image with the **Image URI** printed at the end of Step 2.5 (e.g., `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/jenkins-agent-custom:latest`).
 5. Click **Create**. 
 
 ---
@@ -256,10 +283,14 @@ Now we update the blueprint to use the real image and increase CPU/Memory for Te
 ### Step 3.1: Global SSL Certificate (us-east-1 ONLY)
 CloudFront absolutely requires the certificate to be in `us-east-1`.
 
-*Manual UI:* Go to **ACM** in `us-east-1` > Request public cert > Validate via Route53 > Wait for "Issued".
-
 <details>
 <summary>⚡ Click to view: AWS CLI - Request Global ACM Certificate</summary>
+
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`--domain-name`**: Replace `yourdomain.com` with your actual registered domain (e.g., `infrasoftwarearchitect.online`).
+> *   **`--subject-alternative-names`**: Replace `api.yourdomain.com` with your API subdomain (e.g., `api.infrasoftwarearchitect.online`).
+> *   **`--region`**: DO NOT CHANGE. It absolutely MUST stay `us-east-1` for CloudFront.
+> *   *Note:* After running this, you still MUST go to Route53 and create the CNAME validation records it outputs, then wait 15 mins for it to issue.
 
 ```bash
 aws acm request-certificate \
@@ -267,7 +298,6 @@ aws acm request-certificate \
   --subject-alternative-names api.yourdomain.com \
   --validation-method DNS \
   --region us-east-1
-# NOTE: Copy the output ARN. You still MUST go to Route53 and create the CNAME validation records manually, or use the output DNS values to create them.
 ```
 </details>
 
@@ -281,7 +311,7 @@ aws acm request-certificate \
    *   `bucket_name`: Unique name (e.g., `cdec-alpha-bucket-123`).
    *   `domain_name`: `yourdomain.com`
    *   `api_fqdn`: `api.yourdomain.com`
-   *   `acm_arn`: Paste ARN from Step 3.1.
+   *   `acm_arn`: Paste the ARN from Step 3.1.
 2. Go to Jenkins. Run pipeline `fe-alpha-2`. 
 
 ---
@@ -291,18 +321,18 @@ aws acm request-certificate \
 ### Step 4.1: Regional SSL Certificate
 The Application Load Balancer (ALB) needs a certificate in the *same region* as your backend, NOT us-east-1.
 
-*Manual UI:* Go to **ACM** in your backend region > Request cert > Validate > Check "Enable export" > Copy ARN.
-
 <details>
 <summary>⚡ Click to view: AWS CLI - Request Regional ACM Certificate</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`--domain-name`**: Replace `api.yourdomain.com` with your API subdomain.
+> *   **`--region`**: Change `eu-west-1` to the region where your backend infrastructure (EKS/VPC) is located (e.g., `ap-southeast-2`).
+
 ```bash
-# Change eu-west-1 to your backend region (e.g., ap-southeast-2 for Sydney)
 aws acm request-certificate \
   --domain-name api.yourdomain.com \
   --validation-method DNS \
-  --region eu-west-1
-# NOTE: Remember to add the DNS validation records in Route 53!
+  --region eu-west-1 # <--- CHANGE THIS TO YOUR BACKEND REGION
 ```
 </details>
 
@@ -317,25 +347,28 @@ aws acm request-certificate \
 ### Step 4.3: Manually Attach SSL to ALB (The "Gotcha")
 If Terraform created the ALB but couldn't attach the cert due to timing, you must do it manually.
 
-*Manual UI:* Go to **EC2** > **Load Balancers** > Select ALB > Listeners > Add HTTPS(443) > Select Target Group > Attach Cert.
-
 <details>
 <summary>⚡ Click to view: AWS CLI - Attach HTTPS Listener to ALB</summary>
 
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`ALB_ARN`**: Go to AWS Console -> **EC2** -> **Load Balancers** -> Click your backend ALB -> Copy the long ARN at the top left.
+> *   **`TARGET_GROUP_ARN`**: Go to AWS Console -> **EC2** -> **Target Groups** -> Click your target group -> Copy the long ARN at the top left.
+> *   **`REGIONAL_ACM_ARN`**: Go to AWS Console -> **ACM** (Make sure you are in the correct backend region!) -> Copy the ARN of the certificate you requested in Step 4.1.
+> *   **`--region`**: Change `eu-west-1` to the region where your backend is located.
+
 ```bash
-# Variables to replace with your actual ARNs
+# REPLACE THESE THREE ARNs WITH YOUR ACTUAL VALUES
 ALB_ARN="arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/my-alb/1234567890abcdef"
 TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:eu-west-1:123456789012:targetgroup/my-tg/1234567890abcdef"
 REGIONAL_ACM_ARN="arn:aws:acm:eu-west-1:123456789012:certificate/12345678-1234-1234-1234-123456789012"
 
-# Create the listener
 aws elbv2 create-listener \
     --load-balancer-arn $ALB_ARN \
     --protocol HTTPS \
     --port 443 \
     --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN \
     --certificates CertificateArn=$REGIONAL_ACM_ARN \
-    --region eu-west-1
+    --region eu-west-1 # <--- CHANGE THIS TO YOUR BACKEND REGION
 ```
 </details>
 
