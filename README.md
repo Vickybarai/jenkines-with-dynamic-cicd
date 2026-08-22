@@ -13,14 +13,6 @@ When a CI/CD pipeline runs, Jenkins will automatically spin up an ECS container,
 **Reference Guide:** [ECS-Node-Containers-Jenkins-Guide.md](https://github.com/AnupDudhe/cdec/blob/main/DevOps%20Essentials%20for%20Modern%20Engineering%2FJenkins%2FECS-Node-Containers-Jenkins-Guide.md)
 
 ---
-This is the final, heavily verified, end-to-end guide. I have traced the exact project workflow from an empty AWS account to a deployed application. 
-
-I found and fixed **critical missing steps** from previous versions—specifically regarding how the ALB listener is manually attached to the regional ACM certificate, the exact sequence of building the ECS image, and specific code warnings (like never changing the Token variable). 
-
-Here is the definitive, bulletproof manual.
-
-***
-Here is the updated, definitive guide. I have added precise, copy-pasteable AWS CLI scripts inside collapsible dropdowns for *every single manual AWS Console step*. This allows you to choose whether you want to click through the UI or run a quick 3-line script to achieve the exact same result.
 
 ***
 
