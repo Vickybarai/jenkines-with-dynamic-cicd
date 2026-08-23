@@ -226,7 +226,9 @@ aws ecr create-repository --repository-name jenkins-agent-custom --region ap-sou
 
 <details>
 <summary>🐳 Click to view: Custom Jenkins Agent Dockerfile</summary>
+    
 *(No changes needed here, just copy and paste the whole block into a file named `Dockerfile` on your server)*
+
 ```dockerfile
 FROM jenkins/inbound-agent:latest
 USER root
