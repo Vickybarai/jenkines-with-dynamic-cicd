@@ -54,7 +54,7 @@ sudo systemctl restart jenkins
 ### Step 1.4: Attach IAM Role to EC2
 *Manual UI:* Go to **IAM** > **Roles** > Create role (`EC2-Full-Access-Role`) with `AmazonEC2FullAccess` policy. Go to EC2 > Attach.
 
-**run all script though local system ssh or attach role (`IAM-Full-Access-Role`) with `AmazonEC2FullAccess` policy.  **
+*run all script though local system ssh or attach role (`IAM-Full-Access-Role`) with `AmazonEC2FullAccess` policy.*
 
 <details>
 <summary>⚡ Click to view: AWS CLI - Attach IAM Role</summary>
