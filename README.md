@@ -243,12 +243,18 @@ You are now done with Phase 2! Jenkins is officially configured to spin up your 
     
     
 .....
+
+
+
 ### Step 2.4: Add AWS Credentials
-1. **Manage Jenkins** > **Credentials** > **System** > **Global** > **Add Credentials**.
-2. Kind: **AWS Credentials**.
-3. **ID:** `cdec-alpha-app-aws-creds` *(Strictly this exact string)*.
-4. **Description:** `cdec-alpha-app-aws-creds`
-5. Add your IAM User Access Key and Secret Key. Create.
+
+1. Go to Manage Jenkins > Credentials > System > Global credentials (unrestricted) > Add Credentials.
+2. Kind: Select AWS Credentials.
+3. AWS Access Key ID: Paste your Access Key ID here.
+4. AWS Secret Access Key: Paste your Secret Access Key here.
+5. ID: `cdec-alpha-app-aws-creds` (MUST be exactly this string, no spaces, no typos!)
+6. Description: `cdec-alpha-app-aws-creds`
+  Click Create.
 
 ### Step 2.5: Build & Push Custom Agent Image
 1. Go to **AWS ECR** > **Create Repository** > Name it `jenkins-agent-custom`. (Or use script below).
