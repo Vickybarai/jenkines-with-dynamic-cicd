@@ -187,7 +187,19 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 ```
 </details>
 
-### Step 2.3: Configure Jenkins ECS Cloud
+### Step 2.3: Add AWS Credentials
+
+1. Go to Manage Jenkins > Credentials > System > Global credentials (unrestricted) > Add Credentials.
+2. Kind: Select AWS Credentials.
+3. AWS Access Key ID: Paste your Access Key ID here.
+4. AWS Secret Access Key: Paste your Secret Access Key here.
+5. ID: `cdec-alpha-app-aws-creds` (MUST be exactly this string, no spaces, no typos!)
+6. Description: `cdec-alpha-app-aws-creds`
+  Click Create.
+
+
+
+### Step 2.4: Configure Jenkins ECS Cloud
 
 *   **Name:** `ECS`
 *   **Amazon ECS Credentials:** Click the dropdown and select `cdec-alpha-app-aws-creds` (The one we made in Step 2.4).
@@ -196,9 +208,9 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 *   **ECS Cluster:** Click the dropdown. Select the cluster you created. *(It will either be named `jenkins-ecs-cluster` or `cdec-ecs-cluster` depending on how it was created).*
 *   **Click "Save"** (Do NOT click Add Agent Template yet).
 
----
 
-###  ECS Agent Templates
+
+###   Go to Manage Jenkins > cloud > ECS Agent Templates
 *(After you click Save, click on the word "ECS" that appears, then click "Add Agent Template")*
 
 > ⚠️ **CRITICAL RULE:** Because we updated the CPU, Memory, and Docker Image directly inside the AWS Console, you must **LEAVE BLANK** any fields that duplicate those settings. If you fill them out here, Jenkins will override your AWS settings and the pod will fail to start.
@@ -245,16 +257,6 @@ You are now done with Phase 2! Jenkins is officially configured to spin up your 
 .....
 
 
-
-### Step 2.4: Add AWS Credentials
-
-1. Go to Manage Jenkins > Credentials > System > Global credentials (unrestricted) > Add Credentials.
-2. Kind: Select AWS Credentials.
-3. AWS Access Key ID: Paste your Access Key ID here.
-4. AWS Secret Access Key: Paste your Secret Access Key here.
-5. ID: `cdec-alpha-app-aws-creds` (MUST be exactly this string, no spaces, no typos!)
-6. Description: `cdec-alpha-app-aws-creds`
-  Click Create.
 
 ### Step 2.5: Build & Push Custom Agent Image
 1. Go to **AWS ECR** > **Create Repository** > Name it `jenkins-agent-custom`. (Or use script below).
