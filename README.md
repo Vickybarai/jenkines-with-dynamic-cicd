@@ -188,19 +188,61 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 </details>
 
 ### Step 2.3: Configure Jenkins ECS Cloud
-1. **Manage Jenkins** > **Clouds** > **New Cloud** > `Amazon ECS`.
-2. **Name:** `ECS` | **Region:** Your chosen region.
-3. Save, then click the cloud again > **Add Agent Template**:
-   *   **Label:** `ecs` *(Used in Jenkinsfiles)*
-   *   **Template Name:** `ecs-agent`
-   *   **Launch Type:** `FARGATE**
-   *   **Network Mode:** `awsvpc`
-   *   **Assign Public IP:** `ENABLED`
-   *   **Security Group:** Jenkins Master SG ID.
-   *   **Subnets:** Your VPC Subnet IDs.
-   *   **Task Definition:** Select the task from Step 2.2.
-4. **Advanced > Tunnel:** `<Jenkins-Master-Public-IP>:5000` > Save.
 
+*   **Name:** `ECS`
+*   **Amazon ECS Credentials:** Click the dropdown and select `cdec-alpha-app-aws-creds` (The one we made in Step 2.4).
+*   **Assumed Role ARN:** *Leave Blank*
+*   **Amazon ECS Region Name:** `us-east-1` *(Change this ONLY if you built your infrastructure in a different region like Sydney or Ireland. If you followed the scripts exactly, keep it `us-east-1`)*
+*   **ECS Cluster:** Click the dropdown. Select the cluster you created. *(It will either be named `jenkins-ecs-cluster` or `cdec-ecs-cluster` depending on how it was created).*
+*   **Click "Save"** (Do NOT click Add Agent Template yet).
+
+---
+
+###  ECS Agent Templates
+*(After you click Save, click on the word "ECS" that appears, then click "Add Agent Template")*
+
+> ⚠️ **CRITICAL RULE:** Because we updated the CPU, Memory, and Docker Image directly inside the AWS Console, you must **LEAVE BLANK** any fields that duplicate those settings. If you fill them out here, Jenkins will override your AWS settings and the pod will fail to start.
+
+*   **Label:** `ecs` *(Do not change this, your Jenkinsfile looks for this exact word)*
+*   **Template Name:** `ecs-agent`
+*   **Agent Container Name:** *Leave Blank*
+*   **Task Definition Override:** *Leave Blank* 
+*   **Docker Image:** *Leave Blank*
+*   **Secrets manager ARN:** *Leave Blank*
+*   **Launch type:** Select `FARGATE`
+*   **Operating System Family:** **⚠️ MUST CHANGE TO `LINUX`** *(Jenkins defaults to Windows, which will crash our Ubuntu Dockerfile!)*
+*   **CPU Architecture:** `X86_64`
+*   **Default Capacity Provider:** *Leave Default*
+*   **Capacity provider strategy:** *Leave Default*
+*   **Network mode:** `awsvpc`
+*   **Filesystem root:** *Leave Default (`/home/jenkins`)*
+*   **Platform Version:** `LATEST`
+*   **Soft Memory Reservation:** `0` *(Leave as 0)*
+*   **Hard Memory Reservation:** `0` *(Leave as 0)*
+*   **CPU units:** `0` *(Leave as 0)*
+*   **Ephemeral Storage:** `0` *(Leave as 0)*
+*   **Subnets:** Paste your VPC Subnet IDs here, separated by commas (e.g., `subnet-0a1b2c3d4e5f6g7h8, subnet-1a2b3c4d5e6f7g8h9`)
+*   **Security Groups:** Paste your Jenkins Master Security Group ID here (e.g., `sg-0a1b2c3d4e5f6g7h8`)
+*   **Assign Public Ip:** `ENABLED`
+*   **Task Role ARN:** *Leave Blank* *(The role is already baked into the AWS Task Definition)*
+*   **Task Execution Role ARN:** *Leave Blank* *(Same reason)*
+
+### 🔽 Part 3: The Tunnel (Hidden at the bottom!)
+You have to scroll all the way to the bottom of the Agent Template box to find this. This is how the ECS worker talks back to Jenkins.
+
+1. Scroll down to the **Advanced** section and expand it.
+2. Find the field named **Tunnel**.
+3. Enter: `<Your-Jenkins-Master-Public-IP>:5000` *(Example: `13.51.123.45:5000`)*
+
+---
+
+Click **Save** at the very bottom. 
+
+You are now done with Phase 2! Jenkins is officially configured to spin up your custom, heavy-duty DevOps container whenever a pipeline asks for an `ecs` agent.    
+    
+    
+    
+.....
 ### Step 2.4: Add AWS Credentials
 1. **Manage Jenkins** > **Credentials** > **System** > **Global** > **Add Credentials**.
 2. Kind: **AWS Credentials**.
