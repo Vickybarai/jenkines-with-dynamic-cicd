@@ -282,16 +282,33 @@ aws ecr create-repository --repository-name jenkins-agent-custom --region ap-sou
 ```dockerfile
 FROM jenkins/inbound-agent:latest
 USER root
-RUN apt-get update && apt-get install -y curl wget git unzip software-properties-common apt-transport-https ca-certificates gnupg lsb-release && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list && \
-    apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io && rm -rf /var/lib/apt/lists/*
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl wget git unzip \
+    apt-transport-https ca-certificates gnupg lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker (Using native Debian repos to avoid Docker CDN 403 errors)
+RUN apt-get update && apt-get install -y docker.io
+
+# Install kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+
+# Install Helm
 RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Install Terraform (Corrected for Debian)
 RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list && \
     apt-get update && apt-get install -y terraform && rm -rf /var/lib/apt/lists/*
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws/
+
+# Install AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws/
+
+# Add jenkins user to docker group
 RUN usermod -aG docker jenkins
 USER jenkins
 ```
