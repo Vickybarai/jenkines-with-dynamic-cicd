@@ -1,4 +1,4 @@
-
+    
 
 # 🚀 DevOps Landing Zone & ECS Agent Setup 
 
@@ -54,8 +54,6 @@ sudo systemctl restart jenkins
 ### Step 1.4: Attach IAM Role to EC2
 *Manual UI:* Go to **IAM** > **Roles** > Create role (`EC2-Full-Access-Role`) with `AmazonEC2FullAccess` policy. Go to EC2 > Attach.
 
-*run all script though local system ssh or attach role (`IAM-Full-Access-Role`) with `AmazonEC2FullAccess` policy.*
-
 <details>
 <summary>⚡ Click to view: AWS CLI - Attach IAM Role</summary>
 
@@ -70,9 +68,9 @@ aws iam create-instance-profile \
     --region ap-southeast-2
 
 aws iam add-role-to-instance-profile \
-    --instance-profile-name EC2-Full-Access-Role \
+    --instance-profile-name EC2-Full-Access-Name \
     --role-name EC2-Full-Access-Role \
-    --region ap-southeast-2
+    --region ap-sourtheast-2
 
 # 2. Attach it to your running EC2 instance
 INSTANCE_ID="i-0abcd1234efgh5678" # <--- CHANGE THIS
@@ -89,9 +87,27 @@ aws ec2 associate-iam-instance-profile \
 3. Install suggested plugins.
 4. **Install mandatory custom plugins:** `Pipeline`, `SSH Plugin`, `Amazon Elastic Container Service (ECS)`, `Provisioning`.
 
+### Step 1.6: Configure GitHub Webhooks (How Jenkins knows when you push code)
+*Context: Jenkins doesn't magically know when you run `git push` on GitHub. It uses two methods to check for new code:*
+1. **Polling (Default):** Jenkins checks GitHub every 5 minutes. *(Easy, but takes up to 5 mins to start).*
+2. **Webhooks (Instant):** GitHub instantly messages Jenkins to start the pipeline the second you push.
+
+<details>
+<summary>⚙️ Click to view: How to set up the Webhook in GitHub for instant triggers</summary>
+
+1. Go to your repository on GitHub > **Settings** > **Webhooks** > **Add webhook**.
+2. **Payload URL:** `http://<Your-Jenkins-Public-IP>:8080/github-webhook/`
+3. **Content type:** `application/json`
+4. **Secret:** (Leave blank for now, add a secret later for security if needed).
+5. **Which events trigger the pipeline?** Just select **Just the push event**.
+6. **Active:** Check the box.
+7. Click **Add webhook**.
+*(You will need to do this for `fe-alpha-2`, `be-alpha-2`, and any microservice repo you deploy later).*
+</details>
+
 ---
 
-# 📅 Phase 2: The Serverless Worker (Days 2 & 3 Combined)
+# 📅 Phase 2: The Foundation - Cluster, Role & Task Def (Days 2 & 3 Combined)
 
 > ⚠️ **CRITICAL PREREQUISITE BEFORE STARTING:** 
 > You **must** enable the TCP port for inbound agents inside Jenkins itself, not just the AWS Security Group.
@@ -99,13 +115,43 @@ aws ec2 associate-iam-instance-profile \
 > 2. Scroll to **Agents** section.
 > 3. Select **Fixed** and set it to `5000`. Click **Save**.
 
-### Step 2.1: Create CloudWatch Log Group & IAM Role
+### Step 2.1: Create the ECS Cluster (THE DEPENDENCY)
+*Logic Check: Jenkins cannot use an ECS Task Definition if the cluster doesn't exist yet. We must create it first.
+
+<details>
+<summary>📁 Click to view: create-ecs-cluster.sh</summary>
+
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`CLUSTER_NAME`**: Keep as `cdec-ecs-cluster` unless told otherwise. *(The Jenkinsfile looks for this specific cluster name)*.
+> *   **`REGION`**: Change `ap-southeast-2` to the AWS region you are working in.
+
+```bash
+#!/bin/bash
+CLUSTER_NAME="cdec-ecs-cluster"
+REGION="ap-southeast-2" # <--- CHANGE THIS REGION IF NEEDED
+
+echo "🔐 Ensuring ECS Service-Linked Role exists..."
+aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com 2>/dev/null || true
+
+echo "🚀 Creating ECS Cluster: $CLUSTER_NAME"
+aws ecs create-cluster \
+    --cluster-name $CLUSTER_NAME \
+    --region $REGION \
+    --capacity-providers FARGATE \
+    --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1 \
+    --settings name=containerInsights,value=enabled
+
+echo "✅ ECS Cluster created successfully!"
+```
+</details>
+
+### Step 2.2: Create CloudWatch Log Group
 
 <details>
 <summary>📁 Click to view: create-log-group.sh</summary>
 
 > 🛑️ **BEGINNERS: What to change before running!**
-> *   **`--region`**: Change `ap-southeast-2` to the AWS region where you are building your infrastructure (e.g., `eu-west-1` for Ireland, `us-east-1` for N. Virginia).
+> *   **`--region`**: Change `ap-southeast-2` to the AWS region you are working in.
 
 ```bash
 aws logs create-log-group \
@@ -114,6 +160,7 @@ aws logs create-log-group \
 ```
 </details>
 
+### Step 2.3: Create IAM Role for ECS
 1. SSH into your master server. Create `role.sh` using the script below.
 2. Run `bash role.sh`.
 3. Go to **AWS IAM** > **Roles**, find `ECS-Task-Execution-Role`, and **copy its ARN**.
@@ -124,12 +171,12 @@ aws logs create-log-group \
 > 🛑️ **BEGINNERS: What to change before running!**
 > *   **`ROLE_NAME`**: Leave this as `ECS-Task-Execution-Role` unless instructed otherwise.
 > *   **`--region`**: Change `ap-southeast-2` to the AWS region you are working in.
-> *   **Output:** When this finishes, it will print an ARN. **Write that ARN down**, you need it in Step 2.2!
+> *   **Output:** When this finishes, it will print an ARN. **Write that ARN down**, you need it in Step 2.4!
 
 ```bash
 #!/bin/bash
 ROLE_NAME="ECS-Task-Execution-Role"
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ACCOUNT_ID=$(aws sts get-caller-identity --查询 Account --output text)
 REGION="ap-southeast-2" # <--- CHANGE THIS REGION IF NEEDED
 
 aws iam create-role \
@@ -158,18 +205,18 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 ```
 </details>
 
-### Step 2.2: Create Base Task Definition
+### Step 2.4: Create Base Task Definition
 > ⚠️ **IMPORTANT NOTE:** When creating ECS task definitions for Jenkins agents, **DO NOT** set `JENKINS_SECRET` or `JENKINS_AGENT_NAME` as environment variables. These are automatically provided by the Jenkins ECS plugin and setting them manually will cause the "Cannot provide secret via both named and positional arguments" error.
 
 1. Go to **AWS ECS** > **Task Definitions** > **Create new** > **JSON**.
-2. Paste the JSON below. Replace the `"executionRoleArn"` with the ARN you got from Step 2.1.
+2. Paste the JSON below. Replace the `"executionRoleArn"` with the ARN you got from Step 2.3.
 3. Click **Create**. *(We will upgrade the resources and image in Step 2.5/2.6).*
 
 <details>
 <summary>📁 Click to view: base-task-definition.json</summary>
 
 > 🛑️ **BEGINNERS: What to change before saving in AWS!**
-> *   **`executionRoleArn`**: Replace the dummy text with the ARN you copied from the terminal after running Step 2.1 (e.g., `arn:aws:iam::123456789012:role/ECS-Task-Execution-Role`).
+> *   **`executionRoleArn`**: Replace the dummy text with the ARN you copied from the terminal after running Step 2.3 (e.g., `arn:aws:iam::123456789012:role/ECS-Task-Execution-Role`).
 > *   **`awslogs-region`**: Make sure this matches the region you are working in.
 
 ```json
@@ -180,15 +227,14 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
         "logConfiguration": { "logDriver": "awslogs", "options": { "awslogs-group": "/ecs/jenkins-agent", "awslogs-region": "ap-southeast-2", "awslogs-stream-prefix": "ecs" } },
         "mountPoints": [], "name": "jenkins-agent", "portMappings": [], "systemControls": [], "volumesFrom": []
     }],
-    "executionRoleArn": "REPLACE_WITH_REAL_ARN_FROM_STEP_2.1",
+    "executionRoleArn": "REPLACE_WITH_REAL_ARN_FROM_STEP_2.3",
     "networkMode": "awsvpc", "volumes": [], "placementConstraints": [],
     "requiresCompatibilities": ["FARGATE"], "cpu": "512", "memory": "1024"
 }
 ```
 </details>
 
-### Step 2.3: Add AWS Credentials
-
+### Step 2.5: Add AWS Credentials
 1. Go to Manage Jenkins > Credentials > System > Global credentials (unrestricted) > Add Credentials.
 2. Kind: Select AWS Credentials.
 3. AWS Access Key ID: Paste your Access Key ID here.
@@ -197,20 +243,16 @@ echo "✅ Role ARN: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
 6. Description: `cdec-alpha-app-aws-creds`
   Click Create.
 
-
-
-### Step 2.4: Configure Jenkins ECS Cloud
+### Step 2.6: Configure Jenkins ECS Cloud
 
 *   **Name:** `ECS`
-*   **Amazon ECS Credentials:** Click the dropdown and select `cdec-alpha-app-aws-creds` (The one we made in Step 2.4).
+*   **Amazon ECS Credentials:** Click the dropdown and select `cdec-alpha-app-aws-creds` (The one we made in Step 2.5).
 *   **Assumed Role ARN:** *Leave Blank*
 *   **Amazon ECS Region Name:** `us-east-1` *(Change this ONLY if you built your infrastructure in a different region like Sydney or Ireland. If you followed the scripts exactly, keep it `us-east-1`)*
-*   **ECS Cluster:** Click the dropdown. Select the cluster you created. *(It will either be named `jenkins-ecs-cluster` or `cdec-ecs-cluster` depending on how it was created).*
-*   **Click "Save"** (Do NOT click Add Agent Template yet).
+*   **ECS Cluster:** Click the dropdown. Select the cluster you created in Step 2.1 (`cdec-ces-cluster`). *(If it doesn't appear, refresh the page or wait 2 minutes for AWS to finish creating it).*
+*   Click **Save** (Do NOT click Add Agent Template yet).
 
-
-
-###   Go to Manage Jenkins > cloud > ECS Agent Templates
+### Step 2.7: Add Agent Template inside ECS Cloud
 *(After you click Save, click on the word "ECS" that appears, then click "Add Agent Template")*
 
 > ⚠️ **CRITICAL RULE:** Because we updated the CPU, Memory, and Docker Image directly inside the AWS Console, you must **LEAVE BLANK** any fields that duplicate those settings. If you fill them out here, Jenkins will override your AWS settings and the pod will fail to start.
@@ -245,20 +287,11 @@ You have to scroll all the way to the bottom of the Agent Template box to find t
 1. Scroll down to the **Advanced** section and expand it.
 2. Find the field named **Tunnel**.
 3. Enter: `<Your-Jenkins-Master-Public-IP>:5000` *(Example: `13.51.123.45:5000`)*
+4. Click **Save** at the very bottom. 
 
----
+You are now done with Phase 2! Jenkins is officially configured to spin up your custom, heavy-duty DevOps container whenever a pipeline asks for an `ecs` agent.
 
-Click **Save** at the very bottom. 
-
-You are now done with Phase 2! Jenkins is officially configured to spin up your custom, heavy-duty DevOps container whenever a pipeline asks for an `ecs` agent.    
-    
-    
-    
-.....
-
-
-
-### Step 2.5: Build & Push Custom Agent Image
+### Step 2.8: Build & Push Custom Agent Image
 1. Go to **AWS ECR** > **Create Repository** > Name it `jenkins-agent-custom`. (Or use script below).
 2. On your Jenkins server, create a `Dockerfile` and paste the exact content below.
 
@@ -314,8 +347,6 @@ USER jenkins
 ```
 </details>
 
-3. Run the following commands to build and push:
-
 <details>
 <summary>📁 Click to view: build-and-push.sh</summary>
 
@@ -327,7 +358,7 @@ USER jenkins
 ```bash
 #!/bin/bash
 REGION="ap-southeast-2" # <--- CHANGE THIS REGION
-REPO_NAME="jenkins-agent-custom"
+REPO_NAME="jenkins-custom"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 IMAGE_TAG="latest"
 
@@ -339,12 +370,12 @@ echo "✅ Image URI: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO_NAME:$IMAGE
 ```
 </details>
 
-### Step 2.6: Update Task Definition with Real Image
+### Step 2.9: Update Task Definition with Real Image
 Now we update the blueprint to use the real image and increase CPU/Memory for Terraform/K8s builds.
 1. Go back to **AWS ECS** > **Task Definitions** > Select your task > **Create new revision**.
 2. Change **CPU** to `2048` and **Memory** to `4096`.
 3. Scroll to Container Definitions > **Image**.
-4. Replace the dummy image with the **Image URI** printed at the end of Step 2.5 (e.g., `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/jenkins-agent-custom:latest`).
+4. Replace the dummy image with the **Image URI** printed at the end of Step 2.8 (e.g., `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/jenkins-custom:latest`).
 5. Click **Create**. 
 
 ---
@@ -423,15 +454,15 @@ If Terraform created the ALB but couldn't attach the cert due to timing, you mus
 
 > 🛑️ **BEGINNERS: What to change before running!**
 > *   **`ALB_ARN`**: Go to AWS Console -> **EC2** -> **Load Balancers** -> Click your backend ALB -> Copy the long ARN at the top left.
-> *   **`TARGET_GROUP_ARN`**: Go to AWS Console -> **EC2** -> **Target Groups** -> Click your target group -> Copy the long ARN at the top left.
-> *   **`REGIONAL_ACM_ARN`**: Go to AWS Console -> **ACM** (Make sure you are in the correct backend region!) -> Copy the ARN of the certificate you requested in Step 4.1.
+> *   **`TARGET_GROUP_ARN`: Go to AWS Console -> **EC2** -> **Target Groups** -> Click your target group -> Copy the long ARN at the top left.
+> *   **`REGIONAL_ACM_ARN`: Go to AWS Console -> **ACM** (Make sure you are in the correct backend region!) -> Copy the ARN of the certificate you requested in Step 4.1.
 > *   **`--region`**: Change `eu-west-1` to the region where your backend is located.
 
 ```bash
 # REPLACE THESE THREE ARNs WITH YOUR ACTUAL VALUES
 ALB_ARN="arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/my-alb/1234567890abcdef"
-TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:eu-west-1:123456789012:targetgroup/my-tg/1234567890abcdef"
-REGIONAL_ACM_ARN="arn:aws:acm:eu-west-1:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+TARGET_GROUP_ARN="arn::aws:elasticloadbalancing:eu-west-1:123456789012:targetgroup/my-tg/1234567890abcdef"
+REGIONAL_ACM_ARN="arn:aws:acm:eu-west-1:123456789012:certificate/12345678-1234-1234-1234-1234-123456789012" 
 
 aws elbv2 create-listener \
     --load-balancer-arn $ALB_ARN \
@@ -443,6 +474,139 @@ aws elbv2 create-listener \
 ```
 </details>
 
+<details>
+<summary>
+If you do not have a registered domain name (like `.com` or `.online`), you cannot use Route53, custom CloudFront domains, or validated ACM certificates. 
+ </summary>
+
+However, **you can still complete 100% of the project** using a "Sandbox Mode" workaround. We will bypass the custom domain, use the default AWS URLs, and generate a **Self-Signed SSL Certificate** for the backend.
+
+**Replace Phase 3, 4, and 5 in your guide with the exact steps below:**
+
+***
+
+# 🚨 Phase 3: Frontend Infrastructure (Sandbox Mode - No Domain)
+
+### Step 3.1: Skip Global SSL & Domain Setup
+Because you don't have a domain, completely **skip** requesting the ACM certificate and changing nameservers. 
+
+### Step 3.2: Deploy Frontend via Jenkins
+1. In GitHub, open `infrastructure/frontend/terraform.tfvars`.
+2. **Crucial Change:** Leave the domain variables **blank**:
+   ```hcl
+   bucket_name = "cdec-alpha-bucket-123" # Make this unique
+   domain_name = ""                    # LEAVE BLANK
+   api_fqdn    = ""                    # LEAVE BLANK
+   acm_arn     = ""                    # LEAVE BLANK
+   ```
+3. Go to Jenkins and run pipeline `fe-alpha-2`.
+4. **How to access your frontend:** When the pipeline finishes, Terraform will output a default CloudFront URL in the logs (it looks like `https://d12345abcdef.cloudfront.net`). You will use this ugly URL to access your app instead of a pretty domain name.
+
+---
+
+# 🚨 Phase 4: Backend Infrastructure (Sandbox Mode - No Domain)
+
+### Step 4.1: Create a Self-Signed SSL Certificate
+Since we can't validate a domain for ACM, we will generate a free "Self-Signed" certificate on your Jenkins Master server and import it into AWS.
+
+Run this command in your Jenkins Master SSH terminal:
+
+<details>
+<summary>⚡ Click to view: Generate and Import Self-Signed Certificate</summary>
+
+```bash
+# 1. Generate a private key and a self-signed certificate valid for 365 days
+# Replace "api.yourdomain.com" with ANY string (it won't actually be validated, 
+# but ACM requires a domain name format to import it).
+openssl req -x509 -newkey rsa:2048 -keyout private.key -out certificate.crt -days 365 -nodes -subj "/CN=api.sandbox.local"
+
+# 2. Import the certificate into AWS ACM
+# Change --region to your backend region (e.g., us-east-1 or ap-southeast-2)
+aws acm import-certificate \
+    --certificate fileb://certificate.crt \
+    --private-key fileb://private.key \
+    --region us-east-1
+```
+*(Copy the ARN that gets printed in the terminal output, you need it for the next step)*
+</details>
+
+### Step 4.2: Deploy Backend Infra via Jenkins
+1. In GitHub, duplicate `fe-alpha-2` pipeline config and create `be-alpha-2` pointing to `infrastructure/backend`.
+2. Update `infrastructure/backend/terraform.tfvars`:
+   *   `region`: Your backend region (e.g., `us-east-1`).
+   *   `acm_arn`: Paste the **Self-Signed Cert ARN** from Step 4.1.
+   *   `cluster_name`: e.g., `cdec-eks-dev`.
+3. Run `be-alpha-2` in Jenkins. *(This creates VPC, EKS, and the ALB).*
+
+### Step 4.3: Get the ALB's AWS DNS Name
+Because you don't have a custom domain, you must use the default AWS DNS name that AWS automatically assigns to your Load Balancer.
+1. Go to the **AWS Console** > **EC2** > **Load Balancers**.
+2. Click on the Load Balancer created by Terraform.
+3. Look for **DNS name** (it will look like `internal-alb-1234567890.us-east-1.elb.amazonaws.com`). **Copy this URL.**
+
+### Step 4.4: Manually Attach SSL to ALB
+Even with a self-signed cert, the ALB needs an HTTPS listener to receive secure traffic.
+
+<details>
+<summary>⚡ Click to view: AWS CLI - Attach HTTPS Listener to ALB (Sandbox)</summary>
+
+> 🛑️ **BEGINNERS: What to change before running!**
+> *   **`ALB_ARN`**: Go to AWS Console -> **EC2** -> **Load Balancers** -> Click your backend ALB -> Copy the long ARN at the top left.
+> *   **`TARGET_GROUP_ARN`**: Go to AWS Console -> **EC2** -> **Target Groups** -> Click your target group -> Copy the long ARN at the top left.
+> *   **`REGIONAL_ACM_ARN`**: Paste the ARN you got when you imported the self-signed certificate in Step 4.1.
+> *   **`--region`**: Change `us-east-1` to the region where your backend is located.
+
+```bash
+# REPLACE THESE THREE ARNs WITH YOUR ACTUAL VALUES
+ALB_ARN="arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/my-alb/1234567890abcdef"
+TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/my-tg/1234567890abcdef"
+REGIONAL_ACM_ARN="arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012" 
+
+aws elbv2 create-listener \
+    --load-balancer-arn $ALB_ARN \
+    --protocol HTTPS \
+    --port 443 \
+    --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN \
+    --certificates CertificateArn=$REGIONAL_ACM_ARN \
+    --region us-east-1 # <--- CHANGE THIS TO YOUR BACKEND REGION
+```
+</details>
+
+---
+
+# 🚨 Phase 5: Database & Application Deploy (Sandbox Mode)
+
+### Step 5.1: Setup MongoDB Atlas
+*(No changes here, this remains exactly the same as the main guide)*
+1. Log into **MongoDB Atlas** > Create Free **Shared Cluster** (`alpha-app-db`).
+2. **Database Access:** Create user `mongodb-user` with password `redhat@rate123`.
+3. **Network Access:** Add IP `0.0.0.0/0` (Allow from anywhere).
+4. Click **Connect** > Drivers > Copy the connection string.
+
+### Step 5.2: Update Microservices Code
+Go to `src/main/resources/application.yml` (or `.env`) in `auth`, `courses`, and `enrollment` services:
+
+1. **DO NOT** change the `token` secrets or other base code.
+2. Comment out the sample URL: `# sample_url = mongodb://localhost...`
+3. Paste the Atlas string, replacing `<password>`:
+   ```yaml
+   url: mongodb+srv://mongodb-user:redhat@rate123@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+   ```
+4. Commit and push all 3 services to GitHub.
+
+### Step 5.3: Final Jenkinsfile Adjustments
+Before deploying the backend code, the `Jenkinsfile` in each microservice repo needs two changes:
+1.  **Label:** Change `agent { label 'ecs' }` to `agent { label 'ecs-2' }` (or your specific EKS node label).
+2.  **ECR Repo:** Ensure the `aws ecr` push/pull commands in the Jenkinsfile point to the correct ECR repositories for your specific microservices.
+
+### Step 5.4: How to access your Backend App
+Because you don't have a custom domain like `api.yourdomain.com`, you must use the **ALB DNS Name** you copied in Step 4.3 to test your APIs.
+
+For example, if your backend `auth` service runs on port `8080` internally, you will test it in Postman like this:
+`https://internal-alb-1234567890.us-east-1.elb.amazonaws.com:8080/api/auth/login`
+
+*(Note: Your browser will show a "Not Secure" warning because it's a self-signed certificate. This is completely normal for a sandbox environment and you can click "Advanced" -> "Proceed" to view the app).*
+</details>
 ---
 
 # 📅 Phase 5: Database & Application Deploy (Day 5 - Part 2)
@@ -477,3 +641,4 @@ Run the updated backend pipelines in Jenkins. Jenkins will spin up the ECS worke
 - [ ] **Wrong ACM Region:** Used Sydney/Ireland ACM for CloudFront, or us-east-1 ACM for the ALB.
 - [ ] **Missing Port 5000:** Forgot to open TCP 5000 in the Master EC2 Security Group, *AND* forgot to set the TCP port in `Manage Jenkins` -> `Configure Global Security`.
 - [ ] **Wrong Jenkins Credential ID:** Named the AWS credential `aws-creds` instead of exactly `cdec-alpha-app-aws-creds`.
+- [ ] **Missing Cluster Dependency:** Tried to select the Task Definition in Jenkins *before* creating the ECS cluster in Step 2.1.  
