@@ -27,6 +27,29 @@ When a CI/CD pipeline runs, Jenkins will automatically spin up an ECS container,
 
 ---
 
+## 📁 Understanding the Project Repository Structure
+You will be using this repo: [jenkines-with-dynamic-cicd](https://github.com/Vickybarai/jenkines-with-dynamic-cicd.git)
+
+When you clone this repo, you will see a structure like this:
+```text
+jenkines-with-dynamic-cicd/
+├── infrastructure/
+│   ├── frontend/        <-- Maps to Phase 3 (Frontend IaC)
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── terraform.tfvars  <-- YOU EDIT THIS FILE in Phase 3
+│   └── backend/         <-- Maps to Phase 4 (Backend IaC)
+│       ├── main.tf
+│       ├── variables.tf
+│       └── terraform.tfvars  <-- YOU EDIT THIS FILE in Phase 4
+├── frontend-app/        <-- Your actual frontend code
+├── backend-app/         <-- Your actual backend microservices (auth, courses, etc.)
+└── Jenkinsfile         <-- Tells Jenkins how to build the code
+```
+**How it works:** The `Jenkinsfile` uses the `ecs` agent label we setup in Phase 2. When it runs, it changes into the `infrastructure/frontend` folder and runs Terraform to build the AWS cloud.
+
+---
+
 # 📅 Phase 1: The Control Hub (Day 1)
 
 ### Step 1.1: Launch EC2 Instance
@@ -70,7 +93,7 @@ aws iam create-instance-profile \
 aws iam add-role-to-instance-profile \
     --instance-profile-name EC2-Full-Access-Name \
     --role-name EC2-Full-Access-Role \
-    --region ap-sourtheast-2
+    --region ap-southeast-2
 
 # 2. Attach it to your running EC2 instance
 INSTANCE_ID="i-0abcd1234efgh5678" # <--- CHANGE THIS
@@ -176,7 +199,7 @@ aws logs create-log-group \
 ```bash
 #!/bin/bash
 ROLE_NAME="ECS-Task-Execution-Role"
-ACCOUNT_ID=$(aws sts get-caller-identity --查询 Account --output text)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION="us-east-1" # <--- CHANGE THIS REGION IF NEEDED
 
 aws iam create-role \
@@ -403,17 +426,30 @@ aws acm request-certificate \
 ```
 </details>
 
+<details>
+<summary>🚨 SANDBOX MODE: If you DO NOT have a registered domain (No .com / .online)</summary>
+
+If you do not have a registered domain name, **skip Step 3.1 and Step 3.2 entirely**. 
+1. Open `infrastructure/frontend/terraform.tfvars`.
+2. Leave the domain variables **blank**:
+   ```hcl
+   bucket_name = "cdec-alpha-bucket-123" # Make this unique
+   domain_name = ""                    # LEAVE BLANK
+   api_fqdn    = ""                    # LEAVE BLANK
+   acm_arn     = ""                    # LEAVE BLANK
+   ```
+3. Run the `fe-alpha-2` pipeline. 
+4. **How to access your frontend:** Terraform will output a default CloudFront URL in the logs (looks like `https://d12345abcdef.cloudfront.net`). Use this URL instead of a custom domain name.
+</details>
+
 ### Step 3.2: Point Domain to AWS
+*(Skip this step if you are using Sandbox Mode above)*
 1. Go to **Route 53** > **Hosted Zones**. Copy the 4 NS records.
 2. Log into your Domain Registrar (Hostinger/GoDaddy).
 3. Replace the default Nameservers with the 4 AWS NS records.
 
 ### Step 3.3: Deploy Frontend via Jenkins
-1. In GitHub, update `infrastructure/frontend/terraform.tfvars`:
-   *   `bucket_name`: Unique name (e.g., `cdec-alpha-bucket-123`).
-   *   `domain_name`: `yourdomain.com`
-   *   `api_fqdn`: `api.yourdomain.com`
-   *   `acm_arn`: Paste the ARN from Step 3.1.
+1. In GitHub, update `infrastructure/frontend/terraform.tfvars` (if not using Sandbox Mode).
 2. Go to Jenkins. Run pipeline `fe-alpha-2`. 
 
 ---
@@ -438,84 +474,12 @@ aws acm request-certificate \
 ```
 </details>
 
-### Step 4.2: Deploy Backend Infra via Jenkins
-1. In GitHub, duplicate `fe-alpha-2` pipeline config and create `be-alpha-2` pointing to `infrastructure/backend`.
-2. Update `infrastructure/backend/terraform.tfvars`:
-   *   `region`: Your backend region.
-   *   `acm_arn`: Paste the **Regional** ARN from Step 4.1.
-   *   `cluster_name`: e.g., `cdec-eks-dev`.
-3. Run `be-alpha-2` in Jenkins. *(This creates VPC, EKS, and the ALB).*
-
-### Step 4.3: Manually Attach SSL to ALB (The "Gotcha")
-If Terraform created the ALB but couldn't attach the cert due to timing, you must do it manually.
-
 <details>
-<summary>⚡ Click to view: AWS CLI - Attach HTTPS Listener to ALB</summary>
+<summary>🚨 SANDBOX MODE: If you DO NOT have a registered domain (No .com / .online)</summary>
 
-> 🛑️ **BEGINNERS: What to change before running!**
-> *   **`ALB_ARN`**: Go to AWS Console -> **EC2** -> **Load Balancers** -> Click your backend ALB -> Copy the long ARN at the top left.
-> *   **`TARGET_GROUP_ARN`: Go to AWS Console -> **EC2** -> **Target Groups** -> Click your target group -> Copy the long ARN at the top left.
-> *   **`REGIONAL_ACM_ARN`: Go to AWS Console -> **ACM** (Make sure you are in the correct backend region!) -> Copy the ARN of the certificate you requested in Step 4.1.
-> *   **`--region`**: Change `us-east-1` to the region where your backend is located.
-
-```bash
-# REPLACE THESE THREE ARNs WITH YOUR ACTUAL VALUES
-ALB_ARN="arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/my-alb/1234567890abcdef"
-TARGET_GROUP_ARN="arn::aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/my-tg/1234567890abcdef"
-REGIONAL_ACM_ARN="arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-1234-123456789012" 
-
-aws elbv2 create-listener \
-    --load-balancer-arn $ALB_ARN \
-    --protocol HTTPS \
-    --port 443 \
-    --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN \
-    --certificates CertificateArn=$REGIONAL_ACM_ARN \
-    --region us-east-1 # <--- CHANGE THIS TO YOUR BACKEND REGION
-```
-</details>
----
----
----
-
-<details>
-<summary>
-If you do not have a registered domain name (like `.com` or `.online`), you cannot use Route53, custom CloudFront domains, or validated ACM certificates. 
- </summary>
-
-However, **you can still complete 100% of the project** using a "Sandbox Mode" workaround. We will bypass the custom domain, use the default AWS URLs, and generate a **Self-Signed SSL Certificate** for the backend.
-
-**Replace Phase 3, 4, and 5 in your guide with the exact steps below:**
-
-***
-
-# 🚨 Phase 3: Frontend Infrastructure (Sandbox Mode - No Domain)
-
-### Step 3.1: Skip Global SSL & Domain Setup
-Because you don't have a domain, completely **skip** requesting the ACM certificate and changing nameservers. 
-
-### Step 3.2: Deploy Frontend via Jenkins
-1. In GitHub, open `infrastructure/frontend/terraform.tfvars`.
-2. **Crucial Change:** Leave the domain variables **blank**:
-   ```hcl
-   bucket_name = "cdec-alpha-bucket-123" # Make this unique
-   domain_name = ""                    # LEAVE BLANK
-   api_fqdn    = ""                    # LEAVE BLANK
-   acm_arn     = ""                    # LEAVE BLANK
-   ```
-3. Go to Jenkins and run pipeline `fe-alpha-2`.
-4. **How to access your frontend:** When the pipeline finishes, Terraform will output a default CloudFront URL in the logs (it looks like `https://d12345abcdef.cloudfront.net`). You will use this ugly URL to access your app instead of a pretty domain name.
-
----
-
-# 🚨 Phase 4: Backend Infrastructure (Sandbox Mode - No Domain)
-
-### Step 4.1: Create a Self-Signed SSL Certificate
-Since we can't validate a domain for ACM, we will generate a free "Self-Signed" certificate on your Jenkins Master server and import it into AWS.
+Because you don't have a custom domain, you cannot validate an ACM certificate. We will generate a free "Self-Signed" certificate on your Jenkins server and import it into AWS.
 
 Run this command in your Jenkins Master SSH terminal:
-
-<details>
-<summary>⚡ Click to view: Generate and Import Self-Signed Certificate</summary>
 
 ```bash
 # 1. Generate a private key and a self-signed certificate valid for 365 days
@@ -524,34 +488,28 @@ Run this command in your Jenkins Master SSH terminal:
 openssl req -x509 -newkey rsa:2048 -keyout private.key -out certificate.crt -days 365 -nodes -subj "/CN=api.sandbox.local"
 
 # 2. Import the certificate into AWS ACM
-# Change --region to your backend region (e.g., us-east-1 or us-east-1)
+# Change --region to your backend region (e.g., us-east-1)
 aws acm import-certificate \
     --certificate fileb://certificate.crt \
     --private-key fileb://private.key \
     --region us-east-1
 ```
-*(Copy the ARN that gets printed in the terminal output, you need it for the next step)*
+*(Copy the ARN that gets printed in the terminal output, you need it for Step 4.3!)*
 </details>
 
 ### Step 4.2: Deploy Backend Infra via Jenkins
 1. In GitHub, duplicate `fe-alpha-2` pipeline config and create `be-alpha-2` pointing to `infrastructure/backend`.
 2. Update `infrastructure/backend/terraform.tfvars`:
-   *   `region`: Your backend region (e.g., `us-east-1`).
-   *   `acm_arn`: Paste the **Self-Signed Cert ARN** from Step 4.1.
+   *   `region`: Your backend region.
+   *   `acm_arn`: Paste the **Regional** ARN from Step 4.1 (or Sandbox Mode).
    *   `cluster_name`: e.g., `cdec-eks-dev`.
 3. Run `be-alpha-2` in Jenkins. *(This creates VPC, EKS, and the ALB).*
 
-### Step 4.3: Get the ALB's AWS DNS Name
-Because you don't have a custom domain, you must use the default AWS DNS name that AWS automatically assigns to your Load Balancer.
-1. Go to the **AWS Console** > **EC2** > **Load Balancers**.
-2. Click on the Load Balancer created by Terraform.
-3. Look for **DNS name** (it will look like `internal-alb-1234567890.us-east-1.elb.amazonaws.com`). **Copy this URL.**
-
-### Step 4.4: Manually Attach SSL to ALB
-Even with a self-signed cert, the ALB needs an HTTPS listener to receive secure traffic.
+### Step 4.3: Manually Attach SSL to ALB (The "Gotcha")
+If Terraform created the ALB but couldn't attach the cert due to timing, you must do it manually.
 
 <details>
-<summary>⚡ Click to view: AWS CLI - Attach HTTPS Listener to ALB (Sandbox)</summary>
+<summary>⚡ Click to view: AWS CLI - Attach HTTPS Listener to ALB (Sandbox Mode)</summary>
 
 > 🛑️ **BEGINNERS: What to change before running!**
 > *   **`ALB_ARN`**: Go to AWS Console -> **EC2** -> **Load Balancers** -> Click your backend ALB -> Copy the long ARN at the top left.
@@ -563,7 +521,7 @@ Even with a self-signed cert, the ALB needs an HTTPS listener to receive secure 
 # REPLACE THESE THREE ARNs WITH YOUR ACTUAL VALUES
 ALB_ARN="arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/my-alb/1234567890abcdef"
 TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/my-tg/1234567890abcdef"
-REGIONAL_ACM_ARN="arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012" 
+REGIONAL_ACM_ARN="arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-1234-123456789012" 
 
 aws elbv2 create-listener \
     --load-balancer-arn $ALB_ARN \
@@ -575,43 +533,19 @@ aws elbv2 create-listener \
 ```
 </details>
 
----
+<details>
+<summary>🚨 SANDBOX MODE: How to access your Backend API without a domain</summary>
 
-# 🚨 Phase 5: Database & Application Deploy (Sandbox Mode)
+Because you don't have a custom domain like `api.yourdomain.com`, you must use the default AWS DNS name that AWS automatically assigns to your Load Balancer.
 
-### Step 5.1: Setup MongoDB Atlas
-*(No changes here, this remains exactly the same as the main guide)*
-1. Log into **MongoDB Atlas** > Create Free **Shared Cluster** (`alpha-app-db`).
-2. **Database Access:** Create user `mongodb-user` with password `redhat@rate123`.
-3. **Network Access:** Add IP `0.0.0.0/0` (Allow from anywhere).
-4. Click **Connect** > Drivers > Copy the connection string.
+1. Go to the **AWS Console** > **EC2** > **Load Balancers**.
+2. Click on the Load Balancer created by Terraform.
+3. Look for **DNS name** (it will look like `internal-alb-123456789.us-east-1.elb.amazonaws.com`). **Copy this URL.**
+4. When testing your APIs in Postman, use this URL instead of `api.yourdomain.com` (e.g., `https://internal-alb-123456789.us-east-1.elb.amazonaws.com/api/auth/login`).
 
-### Step 5.2: Update Microservices Code
-Go to `src/main/resources/application.yml` (or `.env`) in `auth`, `courses`, and `enrollment` services:
-
-1. **DO NOT** change the `token` secrets or other base code.
-2. Comment out the sample URL: `# sample_url = mongodb://localhost...`
-3. Paste the Atlas string, replacing `<password>`:
-   ```yaml
-   url: mongodb+srv://mongodb-user:redhat@rate123@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-   ```
-4. Commit and push all 3 services to GitHub.
-
-### Step 5.3: Final Jenkinsfile Adjustments
-Before deploying the backend code, the `Jenkinsfile` in each microservice repo needs two changes:
-1.  **Label:** Change `agent { label 'ecs' }` to `agent { label 'ecs-2' }` (or your specific EKS node label).
-2.  **ECR Repo:** Ensure the `aws ecr` push/pull commands in the Jenkinsfile point to the correct ECR repositories for your specific microservices.
-
-### Step 5.4: How to access your Backend App
-Because you don't have a custom domain like `api.yourdomain.com`, you must use the **ALB DNS Name** you copied in Step 4.3 to test your APIs.
-
-For example, if your backend `auth` service runs on port `8080` internally, you will test it in Postman like this:
-`https://internal-alb-1234567890.us-east-1.elb.amazonaws.com:8080/api/auth/login`
-
-*(Note: Your browser will show a "Not Secure" warning because it's a self-signed certificate. This is completely normal for a sandbox environment and you can click "Advanced" -> "Proceed" to view the app).*
+*(Note: Your browser will show a "Not Secure" warning because it's a self-signed certificate. This is completely normal for a sandbox environment. Click "Advanced" -> "Proceed" to view the app).*
 </details>
----
----
+
 ---
 
 # 📅 Phase 5: Database & Application Deploy (Day 5 - Part 2)
@@ -646,4 +580,4 @@ Run the updated backend pipelines in Jenkins. Jenkins will spin up the ECS worke
 - [ ] **Wrong ACM Region:** Used Sydney/Ireland ACM for CloudFront, or us-east-1 ACM for the ALB.
 - [ ] **Missing Port 5000:** Forgot to open TCP 5000 in the Master EC2 Security Group, *AND* forgot to set the TCP port in `Manage Jenkins` -> `Configure Global Security`.
 - [ ] **Wrong Jenkins Credential ID:** Named the AWS credential `aws-creds` instead of exactly `cdec-alpha-app-aws-creds`.
-- [ ] **Missing Cluster Dependency:** Tried to select the Task Definition in Jenkins *before* creating the ECS cluster in Step 2.1.  
+- [ ] **Missing Cluster Dependency:** Tried to select the Task Definition in Jenkins *before* creating the ECS cluster in Step 2.1.
