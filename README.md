@@ -400,8 +400,215 @@ Now we update the blueprint to use the real image and increase CPU/Memory for Te
 3. Scroll to Container Definitions > **Image**.
 4. Replace the dummy image with the **Image URI** printed at the end of Step 2.8 (e.g., `123456789012.dkr.ecr.us-east-1.amazonaws.com/jenkins-custom:latest`).
 5. Click **Create**. 
+---
+### 🧠 Phase 2.10: Understanding the Terraform Architecture (How it works)
+
+Before we run the Phase 3 pipelines, it is critical to understand how the Terraform code in the repository functions. **You NEVER edit `main.tf` or `variables.tf` manually.** 
+
+Think of it like this:
+
+```text
+[variables.tf] (The Questionnaire) ---> [main.tf] (The Logic) <--- (reads from)
+                 ^
+                 |
+                 [terraform.tfvars] (Your Answers)
+```
+
+#### 📂 1. Frontend Setup (`infrastructure/frontend/`)
+The frontend Terraform builds an S3 bucket for hosting your React/Angular app, a CloudFront distribution to serve it globally, and Route53 DNS to link your custom domain. 
+
+**1. Open `infrastructure/frontend/variables.tf`**
+This file contains the "blanks" Terraform needs filled in to build the frontend cloud.
+
+<details>
+<summary>📁 Click to view: What's inside `infrastructure/frontend/variables.tf`?</summary>
+
+```hcl
+variable "bucket_name" {
+  description = "A globally unique name for the S3 bucket (e.g., cdec-alpha-bucket-123456)"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "Your registered domain (e.g., myapp.com). Leave BLANK if using Sandbox Mode."
+  type        = string
+  default     = "" 
+  # ⚠️ SANDBOX NOTE: If blank, Terraform will skip Route53 and ACM, and give you a default CloudFront URL.
+}
+
+variable "api_fqdn" {
+  description = "Subdomain for your backend API (e.g., api.myapp.com). Leave BLANK if using Sandbox Mode."
+  type        = string
+  default     = "" 
+}
+
+variable "acm_arn" {
+  description = "ARN of the SSL certificate in us-east-1 for CloudFront. Leave BLANK if using Sandbox Mode."
+  type        = string
+  default     = "" 
+}
+
+variable "region" {
+  description = "AWS Region where the frontend resources will live."
+  type        = string
+  default     = "us-east-1"
+}
+```
+</details>
+
+**File:** `infrastructure/frontend/main.tf` (The Logic)
+This file contains the actual AWS logic. It uses `var.bucket_name` to create the S3 bucket, `var.domain_name` to create Route 53 records, and `var.acm_arn` to attach the SSL cert to CloudFront. Because you are leaving domains blank in `.tfvars`, Terraform knows to skip those specific steps.
+
+<details>
+<summary>📁 Click to view: What's inside `infrastructure/frontend/main.tf`? (Simplified)</summary>
+
+```hcl
+# 1. S3 Bucket for React/Angular build artifacts
+resource "aws_s3_bucket" "frontend-bucket" {
+  bucket = var.bucket_name
+}
+
+# 2. CloudFront Distribution (CDN)
+resource "aws_cloudfront_distribution" "frontend-cdn" {
+  origin {
+    domain_name = var.domain_name
+  }
+  enabled             = true
+  
+  # If domain is blank, Terraform assigns a default cloudfront.net URL automatically
+  viewer_certificate_id = var.acm_arn
+}
+```
+</details>
+
+**File:** `infrastructure/frontend/terraform.tfvars` (YOUR CONFIGURATION)
+This is the ONLY file you touch. You put your specific details here.
+
+<details>
+📁 Click to view: What to put in `infrastructure/frontend/terraform.tfvars` (Sandbox Mode)</summary>
+
+```hcl
+# ⚠️ SANDBOX MODE: No Domain Name
+bucket_name = "cdec-frontend-bucket-123456" # MUST be globally unique (add random numbers at the end)
+domain_name = ""                                # LEAVE BLANK
+api_fqdn    = ""                                # LEAVE BLANK
+acm_arn     = ""                                # LEAVE BLANK
+region      = "us-east-1"                       # Your chosen AWS region
+```
+*(Result: Terraform will skip Route53 and ACM, and give you a default CloudFront URL like `https://d111111abcdef.cloudfront.net`)*
+</details>
 
 ---
+
+#### 📂 2. Backend Setup (`infrastructure/backend/`)
+The backend Terraform builds the network foundation (VPC, Subnets, Route Tables, Internet Gateway) and the compute layer (EKS Cluster, Application Load Balancer) to run your microservices.
+
+**1. Open `infrastructure/backend/variables.tf`**
+<details>
+<summary>📁 Click to view: What's inside `infrastructure/backend/variables.tf`?</summary>
+
+```hcl
+variable "region" {
+  description = "AWS Region for the backend resources (VPC, EKS, ALB)"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "cluster_name" {
+  description = "Name for your EKS cluster (e.g., cdec-ecs-dev)"
+  type        = string
+  default     = "cdec-ecs-dev"
+}
+
+variable "acm_arn" {
+  description = "ARN of the Regional SSL certificate for the ALB (From Phase 4.1 or Sandbox Self-Signed cert)"
+  type        = string
+  default     = ""
+}
+
+variable "target_group_arn" {
+  description = "ARN of the ALB Target Group (Terraform creates this automatically, or you find it in the AWS Console if manual attachment failed)"
+  type        = string
+  default     = ""
+}
+```
+</details>
+
+**File:** `infrastructure/backend/main.tf` (The Logic)
+This file creates the networking (VPC, Subnets) and the compute layer (EKS Cluster, ALB) using your answers.
+
+<details>
+<summary>📁 Click to view: What's inside `infrastructure/backend/main.tf`? (Simplified)</summary>
+
+```hcl
+# 1. Create VPC, Subnets, Route Tables, Internet Gateway
+module "network" {
+  source  = "./network"
+  region = var.region
+}
+
+# 2. Create EKS Cluster
+resource "aws_eks_cluster" "eks-cluster" {
+  name     = var.cluster_name
+  region = var.region
+}
+
+# 3. Create Application Load Balancer
+resource "aws_lb" "backend-alb" {
+  name            = "${var.cluster_name}-alb"
+  internal        = true
+  security_groups = [aws_security_group.backend-sg.id]
+  subnets        = module.network.public_subnets
+}
+```
+</details>
+
+**File:** `infrastructure/backend/terraform.tfvars` (YOUR CONFIGURATION)
+
+<details>
+📁 Click to view: What to put in `infrastructure/backend/terraform.tfvars` (Sandbox Mode)</summary>
+
+```hcl
+# ⚠️ SANDBOX MODE: No Domain Name
+region         = "us-east-1"                       # Your backend region
+cluster_name   = "cdec-ecs-dev"                   # Your EKS cluster name
+acm_arn        = "arn:aws:acm:us-east-1:123456789012:certificate/..." # ARN from Phase 4.1 (or Sandbox self-signed cert)
+target_group_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/..." # ARN from Phase 4.3
+```
+*(Note: If `target_group_arn` is left blank, you will use the default AWS DNS name of the ALB to access your APIs, e.g., `https://internal-k8s-alb-123456789.us-east-1.elb.amazonaws.com/api/auth/login`)*
+</details>
+
+---
+
+### 🔽 How Jenkins executes this (The `Jenkinsfile`)
+
+When you run `fe-alpha-2` or `be-alpha-2` in Jenkins, the `Jenkinsfile` looks at the `infrastructure/` folder, runs `terraform init`, reads your answers from `terraform.tfvars`, and applies them using `main.tf`.
+
+**Inside the repository's `Jenkinsfile` (Simplified example of what it does):**
+```groovy
+pipeline {
+    agent { label 'ecs' } // Uses the dynamic ECS worker we built in Phase 2
+    
+    stages {
+        stage('Terraform Init & Plan') {
+            steps {
+                dir 'infrastructure/frontend' // Changes into this directory
+                sh 'terraform init'          // Initializes Terraform
+                sh 'terraform plan -var-file=terraform.tfvars' // Dry-run using your tfvars
+            }
+        }
+        stage('Terraform Apply') {
+            steps {
+                dir 'infrastructure/frontend'
+                sh 'terraform apply -var-file=terraform.tfvars -auto-approve' // Actually builds the AWS cloud
+            }
+            
+    }
+}
+```
+
+---
+
 
 # 📅 Phase 3: Frontend Infrastructure (Day 4)
 
